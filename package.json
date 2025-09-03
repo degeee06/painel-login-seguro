@@ -1,0 +1,21 @@
+{
+  "name": "painel-login-seguro",
+  "version": "1.0.0",
+  "description": "Servidor de login seguro com painel admin e supabase",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "menu": "node menu.js"
+  },
+  "keywords": [],
+  "author": "Miguel",
+  "license": "MIT",
+  "dependencies": {
+    "@supabase/supabase-js": "^2.39.1",
+    "axios": "^1.6.7",
+    "bcrypt": "^5.1.1",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "jsonwebtoken": "^9.0.2"
+  }
+}
