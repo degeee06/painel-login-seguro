@@ -22,7 +22,7 @@ app.use((err, req, res, next) => {
 });
 
 // 🔑 Credenciais
-const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
+const supabase = createClient(process.env.SUPABASE_URL, process.env.SERVICE_ROLE_KEY);
 const JWT_SECRET = process.env.JWT_SECRET || 'supersecret';
 const ADMIN_KEY = process.env.ADMIN_KEY || "ninguemnuncavaidescobrir";
 
