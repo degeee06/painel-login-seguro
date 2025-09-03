@@ -150,6 +150,7 @@ app.post('/login', async (req, res) => {
   const senhaValida = await bcrypt.compare(password, user.password_hash);
   if (!senhaValida) return res.status(401).json({ error: 'Senha inválida' });
 
+  // atualiza start_time se nunca logou
   if (!user.start_time) {
     await setStartTime(user.email, Date.now());
     user.start_time = Date.now();
@@ -158,12 +159,50 @@ app.post('/login', async (req, res) => {
   const elapsed = (Date.now() - user.start_time) / 1000;
   const timeRemaining = Math.max(0, user.duration_seconds - elapsed);
 
-  if (timeRemaining <= 0)
-    return res.status(403).json({ error: 'Licença expirada' });
+  if (timeRemaining <= 0) return res.status(403).json({ error: 'Licença expirada' });
 
   const token = jwt.sign({ email: user.email }, JWT_SECRET, { expiresIn: `${Math.floor(timeRemaining)}s` });
 
+  // salva o token atual no banco para forçar logout em outro dispositivo
+  await supabase.from('users').update({ current_token: token }).eq('email', user.email);
+
   res.json({ token, timeRemaining: Math.floor(timeRemaining) });
+});
+
+// ==========================
+// Middleware de verificação de token único
+// ==========================
+async function verifyToken(req, res, next) {
+  const auth = req.headers['authorization'];
+  if (!auth) return res.status(401).json({ error: 'Sem autorização' });
+
+  const token = auth.split(' ')[1];
+  try {
+    const payload = jwt.verify(token, JWT_SECRET);
+    const user = await getUser(payload.email);
+    if (!user) return res.status(401).json({ error: 'Usuário não encontrado' });
+
+    // verifica se o token atual bate com o do banco
+    if (user.current_token !== token) return res.status(403).json({ error: 'Usuário deslogado em outro dispositivo' });
+
+    req.user = user;
+    next();
+  } catch (err) {
+    return res.status(401).json({ error: 'Token inválido ou expirado' });
+  }
+}
+
+// ==========================
+// Exemplo de rota protegida
+// ==========================
+app.get('/check', verifyToken, async (req, res) => {
+  const user = req.user;
+  const elapsed = (Date.now() - user.start_time) / 1000;
+  const timeRemaining = Math.max(0, user.duration_seconds - elapsed);
+
+  if (timeRemaining <= 0) return res.status(403).json({ error: 'Licença expirada' });
+
+  res.json({ email: user.email, timeRemaining: Math.floor(timeRemaining) });
 });
 
 // ==========================
