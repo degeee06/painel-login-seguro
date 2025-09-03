@@ -21,8 +21,6 @@ app.use((err, req, res, next) => {
   next();
 });
 
-
-
 // 🔑 Credenciais
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 const JWT_SECRET = process.env.JWT_SECRET || 'supersecret';
@@ -44,7 +42,7 @@ async function getUser(email) {
 async function addUser(email, passwordHash, durationSeconds) {
   const { error } = await supabase
     .from('users')
-    .insert([{ email, password_hash: passwordHash, duration_seconds: durationSeconds, start_time: null }]);
+    .insert([{ email, password_hash: passwordHash, duration_seconds: durationSeconds, start_time: null, current_token: null }]);
   if (error) throw error;
 }
 
@@ -132,45 +130,7 @@ app.put('/admin/updateUserTime', checkAdmin, async (req, res) => {
 });
 
 // ==========================
-// Rotas USER
-// ==========================
-app.post('/login', async (req, res) => {
-  if (!req.body || !req.body.email || !req.body.password)
-    return res.status(400).json({ error: 'JSON inválido ou campos obrigatórios faltando' });
-
-  const { email, password } = req.body;
-  const { data: user, error } = await supabase
-    .from('users')
-    .select('*')
-    .eq('email', email)
-    .single();
-
-  if (error || !user) return res.status(400).json({ error: 'Usuário não encontrado' });
-
-  const senhaValida = await bcrypt.compare(password, user.password_hash);
-  if (!senhaValida) return res.status(401).json({ error: 'Senha inválida' });
-
-  // atualiza start_time se nunca logou
-  if (!user.start_time) {
-    await setStartTime(user.email, Date.now());
-    user.start_time = Date.now();
-  }
-
-  const elapsed = (Date.now() - user.start_time) / 1000;
-  const timeRemaining = Math.max(0, user.duration_seconds - elapsed);
-
-  if (timeRemaining <= 0) return res.status(403).json({ error: 'Licença expirada' });
-
-  const token = jwt.sign({ email: user.email }, JWT_SECRET, { expiresIn: `${Math.floor(timeRemaining)}s` });
-
-  // salva o token atual no banco para forçar logout em outro dispositivo
-  await supabase.from('users').update({ current_token: token }).eq('email', user.email);
-
-  res.json({ token, timeRemaining: Math.floor(timeRemaining) });
-});
-
-// ==========================
-// Middleware de verificação de token único
+// Middleware para token único
 // ==========================
 async function verifyToken(req, res, next) {
   const auth = req.headers['authorization'];
@@ -193,7 +153,62 @@ async function verifyToken(req, res, next) {
 }
 
 // ==========================
-// Exemplo de rota protegida
+// Rotas USER
+// ==========================
+app.post('/login', async (req, res) => {
+  if (!req.body || !req.body.email || !req.body.password)
+    return res.status(400).json({ error: 'JSON inválido ou campos obrigatórios faltando' });
+
+  const { email, password } = req.body;
+  const { data: user, error } = await supabase
+    .from('users')
+    .select('*')
+    .eq('email', email)
+    .single();
+
+  if (error || !user) return res.status(400).json({ error: 'Usuário não encontrado' });
+
+  const senhaValida = await bcrypt.compare(password, user.password_hash);
+  if (!senhaValida) return res.status(401).json({ error: 'Senha inválida' });
+
+  if (!user.start_time) {
+    await setStartTime(user.email, Date.now());
+    user.start_time = Date.now();
+  }
+
+  const elapsed = (Date.now() - user.start_time) / 1000;
+  const timeRemaining = Math.max(0, user.duration_seconds - elapsed);
+
+  if (timeRemaining <= 0)
+    return res.status(403).json({ error: 'Licença expirada' });
+
+  const token = jwt.sign({ email: user.email }, JWT_SECRET, { expiresIn: `${Math.floor(timeRemaining)}s` });
+
+  // atualiza token atual no banco
+  await supabase.from('users').update({ current_token: token }).eq('email', user.email);
+
+  res.json({ token, timeRemaining: Math.floor(timeRemaining) });
+});
+
+// ==========================
+// Rota REFRESH TOKEN
+// ==========================
+app.post('/refresh', verifyToken, async (req, res) => {
+  const user = req.user;
+
+  const elapsed = (Date.now() - user.start_time) / 1000;
+  const timeRemaining = Math.max(0, user.duration_seconds - elapsed);
+
+  if (timeRemaining <= 0) return res.status(403).json({ error: 'Licença expirada' });
+
+  const newToken = jwt.sign({ email: user.email }, JWT_SECRET, { expiresIn: `${Math.floor(timeRemaining)}s` });
+  await supabase.from('users').update({ current_token: newToken }).eq('email', user.email);
+
+  res.json({ token: newToken, timeRemaining: Math.floor(timeRemaining) });
+});
+
+// ==========================
+// Check Licença
 // ==========================
 app.get('/check', verifyToken, async (req, res) => {
   const user = req.user;
@@ -203,56 +218,6 @@ app.get('/check', verifyToken, async (req, res) => {
   if (timeRemaining <= 0) return res.status(403).json({ error: 'Licença expirada' });
 
   res.json({ email: user.email, timeRemaining: Math.floor(timeRemaining) });
-});
-
-// ==========================
-// Rota REFRESH TOKEN
-// ==========================
-app.post('/refresh', async (req, res) => {
-  const auth = req.headers['authorization'];
-  if (!auth) return res.status(401).json({ error: 'Sem autorização' });
-
-  const token = auth.split(' ')[1];
-  try {
-    const payload = jwt.verify(token, JWT_SECRET, { ignoreExpiration: true });
-    const user = await getUser(payload.email);
-    if (!user) return res.status(401).json({ error: 'Usuário não encontrado' });
-
-    const elapsed = (Date.now() - user.start_time) / 1000;
-    const timeRemaining = Math.max(0, user.duration_seconds - elapsed);
-
-    if (timeRemaining <= 0) return res.status(403).json({ error: 'Licença expirada' });
-
-    const newToken = jwt.sign({ email: user.email }, JWT_SECRET, { expiresIn: `${Math.floor(timeRemaining)}s` });
-
-    res.json({ token: newToken, timeRemaining: Math.floor(timeRemaining) });
-  } catch (err) {
-    res.status(401).json({ error: 'Token inválido' });
-  }
-});
-
-// ==========================
-// Check Licença
-// ==========================
-app.get('/check', async (req, res) => {
-  const auth = req.headers['authorization'];
-  if (!auth) return res.status(401).json({ error: 'Sem autorização' });
-
-  const token = auth.split(' ')[1];
-  try {
-    const payload = jwt.verify(token, JWT_SECRET);
-    const user = await getUser(payload.email);
-    if (!user) return res.status(401).json({ error: 'Usuário não encontrado' });
-
-    const elapsed = (Date.now() - user.start_time) / 1000;
-    const timeRemaining = Math.max(0, user.duration_seconds - elapsed);
-
-    if (timeRemaining <= 0) return res.status(403).json({ error: 'Licença expirada' });
-
-    res.json({ email: payload.email, timeRemaining: Math.floor(timeRemaining) });
-  } catch (err) {
-    res.status(401).json({ error: 'Token inválido ou expirado' });
-  }
 });
 
 // ==========================
