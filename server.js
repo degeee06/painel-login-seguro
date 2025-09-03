@@ -6,13 +6,22 @@ const { createClient } = require('@supabase/supabase-js');
 
 const app = express();
 
-// 🔹 Proteção para JSON inválido ou vazio
 app.use(express.json({
   strict: true,
   verify: (req, res, buf) => {
     if (!buf || !buf.length) req.body = {};
   }
 }));
+
+// captura JSON inválido
+app.use((err, req, res, next) => {
+  if (err instanceof SyntaxError && err.status === 400 && 'body' in err) {
+    return res.status(400).json({ error: 'JSON inválido ou nulo' });
+  }
+  next();
+});
+
+
 
 // 🔑 Credenciais
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
