@@ -143,7 +143,8 @@ async function verifyToken(req, res, next) {
     if (!user) return res.status(401).json({ error: 'Usuário não encontrado' });
 
     // verifica se o token atual bate com o do banco
-    if (user.current_token !== token) return res.status(403).json({ error: 'Usuário deslogado em outro dispositivo' });
+    if (user.current_token !== token)
+      return res.status(403).json({ error: 'Usuário deslogado em outro dispositivo' });
 
     req.user = user;
     next();
@@ -156,10 +157,10 @@ async function verifyToken(req, res, next) {
 // Rotas USER
 // ==========================
 app.post('/login', async (req, res) => {
-  if (!req.body || !req.body.email || !req.body.password)
-    return res.status(400).json({ error: 'JSON inválido ou campos obrigatórios faltando' });
+  const { email, password, device_id } = req.body;
+  if (!email || !password || !device_id)
+    return res.status(400).json({ error: 'Campos obrigatórios faltando' });
 
-  const { email, password } = req.body;
   const { data: user, error } = await supabase
     .from('users')
     .select('*')
@@ -178,16 +179,26 @@ app.post('/login', async (req, res) => {
 
   const elapsed = (Date.now() - user.start_time) / 1000;
   const timeRemaining = Math.max(0, user.duration_seconds - elapsed);
+  if (timeRemaining <= 0) return res.status(403).json({ error: 'Licença expirada' });
 
-  if (timeRemaining <= 0)
-    return res.status(403).json({ error: 'Licença expirada' });
+  // Atualiza device_id do usuário no banco
+  await supabase.from('users').update({ device_id }).eq('email', user.email);
 
   const token = jwt.sign({ email: user.email }, JWT_SECRET, { expiresIn: `${Math.floor(timeRemaining)}s` });
-
-  // atualiza token atual no banco
   await supabase.from('users').update({ current_token: token }).eq('email', user.email);
 
   res.json({ token, timeRemaining: Math.floor(timeRemaining) });
+});
+
+app.post('/sessions/validate', verifyToken, async (req, res) => {
+  const { email, device_id } = req.body;
+  const user = await getUser(email);
+  if (!user) return res.json({ valid: false });
+
+  const valid = user.current_token === req.headers['authorization'].split(' ')[1]
+                && user.device_id === device_id;
+
+  res.json({ valid });
 });
 
 // ==========================
