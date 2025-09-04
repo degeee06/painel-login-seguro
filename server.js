@@ -5,7 +5,6 @@ const jwt = require('jsonwebtoken');
 const { createClient } = require('@supabase/supabase-js');
 
 const app = express();
-
 app.use(express.json({
   strict: true,
   verify: (req, res, buf) => {
@@ -13,7 +12,7 @@ app.use(express.json({
   }
 }));
 
-// captura JSON inválido
+// Captura JSON inválido
 app.use((err, req, res, next) => {
   if (err instanceof SyntaxError && err.status === 400 && 'body' in err) {
     return res.status(400).json({ error: 'JSON inválido ou nulo' });
@@ -21,7 +20,7 @@ app.use((err, req, res, next) => {
   next();
 });
 
-// 🔑 Credenciais
+// Credenciais
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SERVICE_ROLE_KEY);
 const JWT_SECRET = process.env.JWT_SECRET || 'supersecret';
 const ADMIN_KEY = process.env.ADMIN_KEY || "ninguemnuncavaidescobrir";
@@ -42,7 +41,14 @@ async function getUser(email) {
 async function addUser(email, passwordHash, durationSeconds) {
   const { error } = await supabase
     .from('users')
-    .insert([{ email, password_hash: passwordHash, duration_seconds: durationSeconds, start_time: null, current_token: null }]);
+    .insert([{
+      email,
+      password_hash: passwordHash,
+      duration_seconds: durationSeconds,
+      start_time: null,
+      current_token: null,
+      device_id: null // campo device_id incluído
+    }]);
   if (error) throw error;
 }
 
@@ -88,7 +94,7 @@ app.post('/admin/addUser', checkAdmin, async (req, res) => {
 app.get('/admin/listUsers', checkAdmin, async (req, res) => {
   const { data, error } = await supabase
     .from('users')
-    .select('email, duration_seconds, start_time');
+    .select('email, duration_seconds, start_time, device_id');
   if (error) return res.status(500).json({ error });
   res.json(data);
 });
@@ -142,7 +148,6 @@ async function verifyToken(req, res, next) {
     const user = await getUser(payload.email);
     if (!user) return res.status(401).json({ error: 'Usuário não encontrado' });
 
-    // verifica se o token atual bate com o do banco
     if (user.current_token !== token)
       return res.status(403).json({ error: 'Usuário deslogado em outro dispositivo' });
 
@@ -190,14 +195,15 @@ app.post('/login', async (req, res) => {
   res.json({ token, timeRemaining: Math.floor(timeRemaining) });
 });
 
-app.post('/sessions/validate', verifyToken, async (req, res) => {
-  const { email, device_id } = req.body;
+// ==========================
+// Sessão / validação
+// ==========================
+app.post('/sessions/validate', async (req, res) => {
+  const { email, device_id, token } = req.body;
   const user = await getUser(email);
   if (!user) return res.json({ valid: false });
 
-  const valid = user.current_token === req.headers['authorization'].split(' ')[1]
-                && user.device_id === device_id;
-
+  const valid = user.current_token === token && user.device_id === device_id;
   res.json({ valid });
 });
 
@@ -221,12 +227,17 @@ app.post('/refresh', verifyToken, async (req, res) => {
 // ==========================
 // Check Licença
 // ==========================
-app.get('/check', verifyToken, async (req, res) => {
+app.post('/check', verifyToken, async (req, res) => {
+  const { device_id } = req.body;
   const user = req.user;
+
   const elapsed = (Date.now() - user.start_time) / 1000;
   const timeRemaining = Math.max(0, user.duration_seconds - elapsed);
 
   if (timeRemaining <= 0) return res.status(403).json({ error: 'Licença expirada' });
+
+  const validDevice = user.device_id === device_id;
+  if (!validDevice) return res.status(403).json({ error: 'Sessão inválida no dispositivo' });
 
   res.json({ email: user.email, timeRemaining: Math.floor(timeRemaining) });
 });
