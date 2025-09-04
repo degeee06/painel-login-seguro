@@ -181,8 +181,15 @@ app.post('/login', async (req, res) => {
   const token = jwt.sign({ email, device_id }, JWT_SECRET, { expiresIn: `${Math.floor(timeRemaining)}s` });
 
   // Salva sessão por device_id
-  await supabase.from('user_sessions')
-    .upsert([{ email, device_id, token }]);
+// Remove sessões antigas do mesmo email em outros devices
+await supabase.from('user_sessions')
+  .delete()
+  .eq('email', email)
+  .neq('device_id', device_id);
+
+// Salva a nova sessão do device atual
+await supabase.from('user_sessions')
+  .upsert([{ email, device_id, token }]);
 
   res.json({ token, timeRemaining: Math.floor(timeRemaining) });
 });
