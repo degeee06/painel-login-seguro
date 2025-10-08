@@ -128,6 +128,27 @@ app.put('/admin/updateUserTime', checkAdmin, async (req, res) => {
   });
 });
 
+
+// Novo endpoint para warm-up (para o teu ping)
+app.get("/warmup", async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('agendamentos').select('count').limit(1);
+    
+    res.json({ 
+      status: "WARM", 
+      timestamp: new Date().toISOString(),
+      supabase: error ? "offline" : "online",
+      ia: DEEPSEEK_API_KEY ? "configurada" : "não configurada"
+    });
+  } catch (error) {
+    res.json({ 
+      status: "COLD", 
+      timestamp: new Date().toISOString(),
+      error: error.message 
+    });
+  }
+});
+
 // ==========================
 // Middleware para token
 // ==========================
