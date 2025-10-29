@@ -1,7 +1,7 @@
 const axios = require('axios');
 const readline = require('readline');
 
-const API_URL = "https://painel-login-seguro.onrender.com"; // 🚀 URL do Render
+const API_URL = "https://painel-login-seguro-61ap.onrender.com"; // 🚀 URL do Render
 const ADMIN_KEY = process.env.ADMIN_KEY || "ninguemnuncavaidescobrir";
 
 const headers = {
